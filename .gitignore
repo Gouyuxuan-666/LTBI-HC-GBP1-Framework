@@ -1,0 +1,42 @@
+# Large data/output files
+M7_output/
+M8_output/
+M11_knockout/
+M11_BayesPrism/output/
+*.xtc
+*.trr
+*.gro
+*.edr
+*.tpr
+*.cpt
+*.log
+topol/
+figures/
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# PDFs (keep in cloud, not git)
+*.pdf
+!figures/*.pdf
+
+# Temp
+*.tmp
+_stdin.txt
+_ndx.txt
+_trj.txt
+
+# Large files
+*.rds
+*.RData
+*.exe
+*.msi
+*.zip
+*.tar
+*.gz
+
+# System
+.DS_Store
+Thumbs.db
