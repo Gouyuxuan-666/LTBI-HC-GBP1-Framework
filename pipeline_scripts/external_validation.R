@@ -18,16 +18,17 @@ suppressMessages({
   library(illuminaHumanv4.db)  # GPL10558 probe mapping
 })
 
-# Load trained model from main pipeline
-if (!file.exists("pipeline_results.rds")) stop("Run run_all.R first to generate pipeline_results.rds")
-pipe <- readRDS("pipeline_results.rds")
-if (is.null(pipe$ml_models) || is.null(pipe$ml_auc)) stop("ML results not found. Run run_all.R steps 12-18 first.")
-
+# Load trained model from individual files (no dependency on pipeline_results.rds)
 source("refer.ML.R")
 
-disease_genes <- pipe$disease_genes
-best_method <- pipe$ml_best
-best_model <- pipe$ml_models[[best_method]]
+model <- readRDS("13/model.MLmodel.rds")
+auc_tab <- read.table("14/model.AUCmatrix.txt", header=TRUE, sep="\t", row.names=1)
+gene_freq <- read.table("17/gene_frequency.txt", header=TRUE)
+disease_genes <- head(gene_freq$Gene, 200)
+
+avg_auc <- rowMeans(auc_tab, na.rm=TRUE)
+best_method <- names(which.max(avg_auc))
+best_model <- model[[best_method]]
 cat(sprintf("Best model: %s | Disease genes: %d\n", best_method, length(disease_genes)))
 
 # ---- Function: process a GEO dataset into gene expression matrix ---
@@ -118,7 +119,7 @@ val2 <- tryCatch(
 
 # ---- Apply ML Model & Calculate AUC ----
 all_results <- list()
-auc_matrix <- data.frame(row.names=names(pipe$ml_models))
+auc_matrix <- data.frame(row.names=names(model))
 
 for (val_name in c("val1", "val2")) {
   val <- get(val_name)
@@ -132,8 +133,8 @@ for (val_name in c("val1", "val2")) {
   val_lab <- data.frame(Type=val$label, Cohort=val$gse_id, row.names=colnames(val$expr))
 
   # Apply best model and calculate AUC
-  for (method in names(pipe$ml_models)) {
-    fit <- pipe$ml_models[[method]]
+  for (method in names(model)) {
+    fit <- model[[method]]
     feat <- ExtractVar(fit)
     feat <- intersect(feat, colnames(val_mat))
     if (length(feat) < 2) { auc_matrix[method, val$gse_id] <- NA; next }
@@ -157,7 +158,7 @@ for (val_name in c("val1", "val2")) {
     auc_matrix[best_method, val$gse_id]))
 
   # ROC curve for best model
-  fit <- pipe$ml_models[[best_method]]
+  fit <- model[[best_method]]
   feat <- ExtractVar(fit)
   feat <- intersect(feat, colnames(val_mat))
   rs <- CalPredictScore(fit, val_mat[, feat, drop=FALSE])
