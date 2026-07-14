@@ -89,31 +89,46 @@ tryCatch({
 cat("\n========== GWAS Catalog: GBP1 Locus ==========\n")
 tryCatch({
   # Search associations by gene
+  # Try gene-mapped associations (REST API may return empty _embedded)
   gw_url <- "https://www.ebi.ac.uk/gwas/rest/api/associations/search"
   resp <- GET(gw_url, query=list(geneName="GBP1", pageSize=50), timeout(30))
   cat(sprintf("GWAS HTTP status: %d\n", status_code(resp)))
+  gw_ok <- FALSE
   if (status_code(resp) == 200) {
     gw <- fromJSON(content(resp, "text", encoding="UTF-8"))
     n_assoc <- gw$page$totalElements
     cat(sprintf("GWAS associations for GBP1: %d\n", n_assoc))
     if (n_assoc > 0 && !is.null(gw[["_embedded"]])) {
       assoc_list <- gw[["_embedded"]][["associations"]]
-      gw_df <- data.frame(
-        pvalue=as.numeric(assoc_list$pvalue),
+      gw_df <- data.frame(pvalue=as.numeric(assoc_list$pvalue),
         trait=sapply(assoc_list$trait, function(x) paste(unique(unlist(x)), collapse="; ")),
         stringsAsFactors=FALSE)
       gw_df <- gw_df[order(gw_df$pvalue), ]
       write.table(gw_df, "extval/db_GWAS/GBP1_GWAS_associations.txt", sep="\t", quote=FALSE, row.names=FALSE)
       cat(sprintf("Top trait: %s (P=%.2e)\n", gw_df$trait[1], gw_df$pvalue[1]))
-    } else {
-      cat("No _embedded associations found. Trying variant-based search...\n")
-      # Fallback: search variants by gene
-      vresp <- GET("https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search",
-        query=list(geneName="GBP1", pageSize=10), timeout(30))
-      if (status_code(vresp) == 200) {
-        vgw <- fromJSON(content(vresp, "text", encoding="UTF-8"))
-        n_vars <- vgw$page$totalElements
-        cat(sprintf("GWAS variants near GBP1: %d\n", n_vars))
+      gw_ok <- TRUE
+    }
+  }
+  if (!gw_ok) {
+    cat("Associations API empty. Searching by genomic region...\n")
+    # GBP1 is at chr1:89,051,882-89,065,208 (hg38). Search ±100kb window.
+    reg_url <- "https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search"
+    reg_resp <- GET(reg_url, query=list(chromosome="1", start=88900000, end=89100000, pageSize=20), timeout(30))
+    if (status_code(reg_resp) == 200) {
+      reg <- fromJSON(content(reg_resp, "text", encoding="UTF-8"))
+      n_snps <- reg$page$totalElements
+      cat(sprintf("SNPs in GBP1 region: %d\n", n_snps))
+      if (n_snps > 0 && !is.null(reg[["_embedded"]])) {
+        snp_list <- reg[["_embedded"]][["singleNucleotidePolymorphisms"]]
+        # Get genomic locations
+        locs <- snp_list$genomicContexts[[1]]
+        snp_df <- data.frame(
+          rsId=snp_list$rsId,
+          chromosome=locs$chromosome,
+          position=locs$position,
+          stringsAsFactors=FALSE)
+        write.table(snp_df, "extval/db_GWAS/GBP1_region_SNPs.txt", sep="\t", quote=FALSE, row.names=FALSE)
+        cat(sprintf("Top SNP: %s at chr%s:%d\n", snp_df$rsId[1], snp_df$chromosome[1], snp_df$position[1]))
       }
     }
   }
