@@ -42,27 +42,29 @@ tryCatch({
     }
   }
 
-  # Fallback: use PSICQUIC REST API (no auth needed)
+  # Fallback: PSICQUIC tab27 format (more common)
   cat("Trying PSICQUIC public endpoint...\n")
   psicquic_url <- "http://www.ebi.ac.uk/Tools/webservices/psicquic/webservices/current/search/interactor/GBP1"
-  resp2 <- GET(psicquic_url, query=list(format="tab25", firstResult=0, maxResults=200))
+  resp2 <- GET(psicquic_url, query=list(format="tab27", firstResult=0, maxResults=200), timeout(30))
+  cat(sprintf("PSICQUIC HTTP: %d\n", status_code(resp2)))
   bg_txt <- content(resp2, "text", encoding="UTF-8")
+  cat(sprintf("Response length: %d chars\n", nchar(bg_txt)))
   bg_lines <- strsplit(bg_txt, "\n")[[1]]
   bg_lines <- bg_lines[!grepl("^#", bg_lines) & bg_lines != ""]
+  cat(sprintf("Data lines: %d\n", length(bg_lines)))
   if (length(bg_lines) > 0) {
     bg_df <- tryCatch(read.table(text=bg_lines, sep="\t", quote="", header=FALSE, fill=TRUE, comment.char=""),
       error=function(e) NULL)
     if (!is.null(bg_df) && ncol(bg_df) >= 2) {
-      colnames(bg_df)[1:2] <- c("InteractorA","InteractorB")
-      # Extract gene names
-      bg_genes <- unique(c(
-        gsub(".*:","", bg_df$InteractorA),
-        gsub(".*:","", bg_df$InteractorB)))
-      bg_genes <- bg_genes[!grepl("^$", bg_genes)]
+      bg_genes <- unique(gsub(".*:", "", c(bg_df[,1], bg_df[,2])))
+      bg_genes <- bg_genes[bg_genes != ""]
       write.table(data.frame(Gene=bg_genes), "extval/db_BioGRID/GBP1_interactors.txt",
         sep="\t", quote=FALSE, row.names=FALSE)
       cat(sprintf("PSICQUIC interactors: %d unique genes\n", length(bg_genes)))
-      cat(sprintf("Top: %s\n", paste(head(bg_genes, 10), collapse=", ")))
+      cat(sprintf("First 10: %s\n", paste(head(bg_genes, 10), collapse=", ")))
+    } else {
+      cat("PSICQUIC response format unexpected, saving raw...\n")
+      writeLines(bg_txt, "extval/db_BioGRID/PSICQUIC_raw.txt")
     }
   }
 }, error=function(e) cat(sprintf("BioGRID failed: %s\n", e$message)))
@@ -149,51 +151,25 @@ tryCatch({
 cat("\n========== gnomAD: GBP1 Population Genetics ==========\n")
 
 tryCatch({
-  gnomad_query <- '{
-    gene(gene_symbol: "GBP1", reference_genome: GRCh38) {
-      gene_id
-      symbol
-      constraint {
-        exp_lof
-        exp_mis
-        obs_lof
-        obs_mis
-        oe_lof
-        oe_lof_upper
-        oe_mis
-        oe_mis_upper
-        pLI
-        lof_z
-        mis_z
-      }
-    }
-  }'
+  gnomad_query <- 'query { gene(gene_symbol: "GBP1", reference_genome: GRCh38) { gene_id symbol constraint { pLI oe_lof_upper mis_z lof_z } } }'
 
   resp <- tryCatch(
     POST("https://gnomad.broadinstitute.org/api",
-      body=list(query=gnomad_query), encode="json",
+      body=gnomad_query, encode="raw",
       add_headers("Content-Type"="application/json"), timeout(30)),
     error=function(e) NULL)
   if (!is.null(resp) && status_code(resp) == 200) {
     gn <- fromJSON(content(resp, "text", encoding="UTF-8"))
     g <- gn$data$gene
-    if (!is.null(g)) {
+    if (!is.null(g) && !is.null(g$constraint)) {
       cst <- g$constraint
       cat(sprintf("GBP1 gnomAD constraint:\n"))
-      cat(sprintf("  pLI = %.2f (pLI > 0.9 = intolerant to LoF)\n", cst$pLI))
-      cat(sprintf("  LOEUF = %.3f (LOEUF < 0.35 = constrained)\n", cst$oe_lof_upper))
-      cat(sprintf("  missense Z = %.2f (Z > 3.09 = constrained)\n", cst$mis_z))
-
-      gnomad_df <- data.frame(
-        Gene="GBP1",
-        pLI=cst$pLI,
-        LOEUF=cst$oe_lof_upper,
-        mis_z=cst$mis_z,
-        lof_z=cst$lof_z,
-        obs_lof=cst$obs_lof,
-        exp_lof=cst$exp_lof,
-        obs_mis=cst$obs_mis,
-        exp_mis=cst$exp_mis)
+      cat(sprintf("  pLI = %s\n", if(is.null(cst$pLI)) "NA" else sprintf("%.2f", cst$pLI)))
+      cat(sprintf("  LOEUF = %s\n", if(is.null(cst$oe_lof_upper)) "NA" else sprintf("%.3f", cst$oe_lof_upper)))
+      cat(sprintf("  mis Z = %s\n", if(is.null(cst$mis_z)) "NA" else sprintf("%.2f", cst$mis_z)))
+      gnomad_df <- data.frame(Gene="GBP1", pLI=cst$pLI, LOEUF=cst$oe_lof_upper,
+        mis_z=cst$mis_z, lof_z=cst$lof_z)
+      write.table(gnomad_df, "extval/db_gnomAD/GBP1_constraint.txt", sep="\t", quote=FALSE, row.names=FALSE)
       write.table(gnomad_df, "extval/db_gnomAD/GBP1_constraint.txt", sep="\t", quote=FALSE, row.names=FALSE)
     }
   } else {
