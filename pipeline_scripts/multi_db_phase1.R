@@ -17,28 +17,36 @@ for (d in c("extval/db_GTEx","extval/db_HPA","extval/db_GWAS")) dir.create(d, re
 # ============================================================================
 cat("\n========== GTEx: GBP1 Tissue Expression ==========\n")
 tryCatch({
-  resp <- GET("https://gtexportal.org/rest/v2/expression/medianTranscriptExpression",
-    query=list(gencodeId="ENSG00000166128.13", datasetId="gtex_v8", format="json"),
-    config(ssl_verifypeer=FALSE), timeout(30))
-  if (status_code(resp) == 200) {
-    gtex <- fromJSON(content(resp, "text", encoding="UTF-8"))
-    gtex_df <- gtex$medianTranscriptExpression
-    if (!is.null(gtex_df) && nrow(gtex_df) > 0) {
-      gtex_df <- gtex_df[order(gtex_df$median, decreasing=TRUE), ]
-      write.table(gtex_df, "extval/db_GTEx/GBP1_GTEx_tissues.txt", sep="\t", quote=FALSE, row.names=FALSE)
-      cat(sprintf("GTEx: %d tissues, max=%.1f TPM (%s)\n", nrow(gtex_df),
-        max(gtex_df$median), gtex_df$tissueSiteDetailId[1]))
-      # Barplot
-      top30 <- head(gtex_df, 30)
-      top30$tissueSiteDetailId <- factor(top30$tissueSiteDetailId,
-        levels=rev(top30$tissueSiteDetailId))
-      pdf("extval/db_GTEx/GBP1_GTEx_barplot.pdf", width=10, height=8)
-      print(ggplot(top30, aes(x=tissueSiteDetailId, y=median)) +
-        geom_bar(stat="identity", fill="#3182BD") + coord_flip() +
-        labs(title="GBP1 Expression Across GTEx Tissues (v8)", x="", y="Median TPM") + theme_bw(11))
-      dev.off(); cat("  GTEx barplot done\n")
+  gtex_url <- "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_median_tpm.gct.gz"
+  gtex_gz <- "extval/db_GTEx/GTEx_v8_median_tpm.gct.gz"
+  gtex_txt <- "extval/db_GTEx/GTEx_v8_median_tpm.gct"
+  if (!file.exists(gtex_txt)) {
+    if (!file.exists(gtex_gz)) {
+      cat("Downloading GTEx v8 median TPM (~13 MB)...\n")
+      download.file(gtex_url, gtex_gz, mode="wb")
     }
-  } else { cat(sprintf("GTEx API returned %d\n", status_code(resp))) }
+    cat("Decompressing...\n")
+    R.utils::gunzip(gtex_gz, destname=gtex_txt, remove=FALSE)
+  }
+  gtex <- read.table(gtex_txt, header=TRUE, sep="\t", skip=2, check.names=FALSE)
+  gbp1_row <- which(gtex$Description == "GBP1")
+  if (length(gbp1_row) == 0) gbp1_row <- grep("GBP1", gtex$Description)[1]
+  if (length(gbp1_row) > 0) {
+    vals <- as.numeric(gtex[gbp1_row, -(1:2)])
+    tissues <- colnames(gtex)[-(1:2)]
+    gtex_df <- data.frame(tissue=tissues, medianTPM=vals, stringsAsFactors=FALSE)
+    gtex_df <- gtex_df[order(gtex_df$medianTPM, decreasing=TRUE), ]
+    write.table(gtex_df, "extval/db_GTEx/GBP1_GTEx_tissues.txt", sep="\t", quote=FALSE, row.names=FALSE)
+    cat(sprintf("GTEx: %d tissues, max=%.1f TPM (%s)\n", nrow(gtex_df),
+      max(gtex_df$medianTPM), gtex_df$tissue[1]))
+    top30 <- head(gtex_df, 30)
+    top30$tissue <- factor(top30$tissue, levels=rev(top30$tissue))
+    pdf("extval/db_GTEx/GBP1_GTEx_barplot.pdf", width=10, height=8)
+    print(ggplot(top30, aes(x=tissue, y=medianTPM)) +
+      geom_bar(stat="identity", fill="#3182BD") + coord_flip() +
+      labs(title="GBP1 Expression Across GTEx Tissues (v8)", x="", y="Median TPM") + theme_bw(11))
+    dev.off(); cat("  GTEx barplot done\n")
+  }
 }, error=function(e) cat(sprintf("GTEx failed: %s\n", e$message)))
 
 # ============================================================================
@@ -83,14 +91,13 @@ tryCatch({
   # Search associations by gene
   gw_url <- "https://www.ebi.ac.uk/gwas/rest/api/associations/search"
   resp <- GET(gw_url, query=list(geneName="GBP1", pageSize=50), timeout(30))
+  cat(sprintf("GWAS HTTP status: %d\n", status_code(resp)))
   if (status_code(resp) == 200) {
     gw <- fromJSON(content(resp, "text", encoding="UTF-8"))
     n_assoc <- gw$page$totalElements
     cat(sprintf("GWAS associations for GBP1: %d\n", n_assoc))
-    if (n_assoc > 0) {
-      # GWAS API uses HAL `_embedded` — use list indexing for safety
-      embed <- gw[["_embedded"]]
-      assoc_list <- embed[["associations"]]
+    if (n_assoc > 0 && !is.null(gw[["_embedded"]])) {
+      assoc_list <- gw[["_embedded"]][["associations"]]
       gw_df <- data.frame(
         pvalue=as.numeric(assoc_list$pvalue),
         trait=sapply(assoc_list$trait, function(x) paste(unique(unlist(x)), collapse="; ")),
@@ -98,9 +105,17 @@ tryCatch({
       gw_df <- gw_df[order(gw_df$pvalue), ]
       write.table(gw_df, "extval/db_GWAS/GBP1_GWAS_associations.txt", sep="\t", quote=FALSE, row.names=FALSE)
       cat(sprintf("Top trait: %s (P=%.2e)\n", gw_df$trait[1], gw_df$pvalue[1]))
+    } else {
+      cat("No _embedded associations found. Trying variant-based search...\n")
+      # Fallback: search variants by gene
+      vresp <- GET("https://www.ebi.ac.uk/gwas/rest/api/singleNucleotidePolymorphisms/search",
+        query=list(geneName="GBP1", pageSize=10), timeout(30))
+      if (status_code(vresp) == 200) {
+        vgw <- fromJSON(content(vresp, "text", encoding="UTF-8"))
+        n_vars <- vgw$page$totalElements
+        cat(sprintf("GWAS variants near GBP1: %d\n", n_vars))
+      }
     }
-  } else {
-    cat(sprintf("GWAS API returned %d\n", status_code(resp)))
   }
 }, error=function(e) cat(sprintf("GWAS failed: %s\n", e$message)))
 
