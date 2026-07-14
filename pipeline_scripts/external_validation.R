@@ -6,6 +6,7 @@
 # Uses GEOquery for fully reproducible download (no local data dependency)
 ###############################################################################
 
+setwd("F:/GBP1_pipeline_2hao")
 # ---- Setup ----
 options(repos = c(CRAN = "https://mirror.lzu.edu.cn/CRAN/"))
 
@@ -31,71 +32,100 @@ best_method <- names(which.max(avg_auc))
 best_model <- model[[best_method]]
 cat(sprintf("Best model: %s | Disease genes: %d\n", best_method, length(disease_genes)))
 
-# ---- Function: process a GEO dataset into gene expression matrix ---
-process_geo <- function(gse_id, platform_pkg, disease_genes) {
-  cat(sprintf("\n--- Processing %s ---\n", gse_id))
-  gse <- getGEO(gse_id, GSEMatrix=TRUE, AnnotGPL=TRUE, getGPL=TRUE)
-  eset <- gse[[1]]
+# ---- Function: parse GEO series matrix WITHOUT internet ----
+parse_series_matrix <- function(gzfile, platform_pkg) {
+  cat(sprintf("  Reading %s...\n", basename(gzfile)))
+  lines <- readLines(gzfile)
 
-  # Probe-to-gene mapping using Bioconductor annotation package
-  probes <- rownames(exprs(eset))
-  if (platform_pkg == "illuminaHumanv4.db") {
-    mapped <- select(illuminaHumanv4.db, keys=probes, columns="SYMBOL", keytype="PROBEID")
-  } else if (platform_pkg == "illuminaHumanv3.db") {
-    library(illuminaHumanv3.db)
-    mapped <- select(illuminaHumanv3.db, keys=probes, columns="SYMBOL", keytype="PROBEID")
-  }
+  # Find sample IDs and group info from header
+  sample_lines <- lines[grep("^!Sample_title", lines)]
+  sample_ids <- gsub('^!Sample_title\\s+"(.*)"$', '\\1', sample_lines)
+  sample_ids_clean <- gsub('^"|"$', '', sample_ids)
 
-  # Merge probes to gene symbols (max probe per gene)
-  mapped <- mapped[!is.na(mapped$SYMBOL) & mapped$SYMBOL != "", ]
-  exp_dat <- exprs(eset)[mapped$PROBEID, , drop=FALSE]
-  rownames(exp_dat) <- mapped$SYMBOL
-  exp_dat <- avereps(exp_dat)
+  # Get GSM IDs from the attribute lines
+  gsm_lines <- lines[grep("^!Sample_geo_accession", lines)]
+  gsm_ids <- gsub('^!Sample_geo_accession\\s+"(.*)"$', '\\1', gsm_lines)
+  gsm_ids <- trimws(gsub('^"|"$', '', gsm_ids))
 
-  # Extract disease genes
-  common_genes <- intersect(disease_genes, rownames(exp_dat))
-  cat(sprintf("  Common disease genes: %d / %d\n", length(common_genes), length(disease_genes)))
-  exp_dat <- exp_dat[common_genes, , drop=FALSE]
+  # Parse group from Sample_title
+  grp_lower <- tolower(gsm_ids)
 
-  # Parse sample groups from phenotype
-  pd <- pData(eset)
-  cat(sprintf("  Phenotype columns: %s\n", paste(colnames(pd), collapse=", ")))
+  # Try parsing from Sample_characteristics lines
+  char_lines <- lines[grep("^!Sample_characteristics_ch1", lines)]
+  char_vals <- gsub('^!Sample_characteristics_ch1\\s+"(.*)"$', '\\1', char_lines)
 
-  # Try to auto-detect group column
-  grp <- NULL
-  for (col in c("characteristics_ch1", "characteristics_ch1.1", "characteristics_ch1.2",
-                "source_name_ch1", "title")) {
-    if (!is.null(pd[[col]])) {
-      vals <- tolower(pd[[col]])
-      if (any(grepl("tb|tuberculosis|active|control|healthy|normal|latent|ltbi", vals))) {
-        grp <- pd[[col]]
-        cat(sprintf("  Using column '%s' for groups\n", col))
-        break
-      }
+  cat(sprintf("  Found %d samples\n", length(gsm_ids)))
+
+  # Classify: Active TB vs Healthy Control
+  is_tb <- grepl("active tb|active tuberculosis|pulmonary tb|pulmonary tuberculosis|tb patient|tb\\b|tuberculosis", grp_lower)
+  is_control <- grepl("healthy control|healthy|normal|control\\b", grp_lower) &
+    !grepl("latent|ltbi|sarcoidosis|pneumonia|lung cancer|cancer|other disease", grp_lower)
+
+  # Try supplementary classification from characteristics
+  if (sum(is_tb) == 0) {
+    for (cv in char_vals) {
+      cv_l <- tolower(cv)
+      is_tb <- is_tb | grepl("active tb|tuberculosis|tb\\b", cv_l)
+      is_control <- is_control | (grepl("healthy|normal|control", cv_l) & !grepl("latent|ltbi|sarcoidosis|pneumonia|cancer", cv_l))
     }
   }
-  if (is.null(grp)) {
-    cat("  WARNING: Could not auto-detect groups. Using first characteristics column.\n")
-    grp <- pd[, grep("characteristics", colnames(pd))[1]]
+
+  # Parse matrix data
+  tbl_start <- which(lines == "!series_matrix_table_begin") + 1
+  tbl_end <- which(lines == "!series_matrix_table_end") - 1
+  cat(sprintf("  Parsing matrix rows %d-%d...\n", tbl_start, tbl_end))
+
+  mat_lines <- lines[tbl_start:tbl_end]
+  header <- strsplit(mat_lines[1], "\t")[[1]]
+  header <- gsub('"', '', header)
+
+  probe_ids <- c()
+  exp_list <- list()
+  for (i in 2:length(mat_lines)) {
+    parts <- strsplit(mat_lines[i], "\t")[[1]]
+    pid <- gsub('"', '', parts[1])
+    vals <- as.numeric(gsub('"', '', parts[-1]))
+    probe_ids <- c(probe_ids, pid)
+    exp_list[[pid]] <- vals
   }
 
-  # Classify: Active TB vs Healthy Control (exclude LTBI, other diseases)
-  grp_lower <- tolower(grp)
-  is_tb <- grepl("active tb|active tuberculosis|tuberculosis[^a-z]|pulmonary tb|pulmonary tuberculosis|tb patient", grp_lower)
-  is_control <- grepl("healthy control|healthy|normal|control[^a-z]|hc[^a-z]", grp_lower) &
-    !grepl("latent|ltbi|sarcoidosis|pneumonia|lung cancer|cancer|other disease|od[^a-z]", grp_lower)
+  # Build expression matrix
+  exp_mat <- do.call(rbind, exp_list)
+  colnames(exp_mat) <- header[-1]
+  rownames(exp_mat) <- probe_ids
+  cat(sprintf("  Matrix: %d probes x %d samples\n", nrow(exp_mat), ncol(exp_mat)))
 
-  cat(sprintf("  Active TB: %d, Healthy Control: %d\n", sum(is_tb), sum(is_control)))
+  # Probe-to-gene mapping via Bioconductor
+  if (platform_pkg == "illuminaHumanv4.db") {
+    mapped <- select(illuminaHumanv4.db, keys=rownames(exp_mat), columns="SYMBOL", keytype="PROBEID")
+  } else {
+    library(illuminaHumanv3.db)
+    mapped <- select(illuminaHumanv3.db, keys=rownames(exp_mat), columns="SYMBOL", keytype="PROBEID")
+  }
+  mapped <- mapped[!is.na(mapped$SYMBOL) & mapped$SYMBOL != "", ]
+  exp_mat <- exp_mat[mapped$PROBEID, , drop=FALSE]
+  rownames(exp_mat) <- mapped$SYMBOL
+  exp_mat <- avereps(exp_mat)
+
+  cat(sprintf("  Active TB: %d, Healthy: %d\n", sum(is_tb), sum(is_control)))
 
   keep <- is_tb | is_control
-  if (sum(keep) == 0) stop("No Active TB or Control samples found")
-  if (sum(is_tb) == 0) warning("No Active TB samples found in ", gse_id)
-  if (sum(is_control) == 0) warning("No control samples found in ", gse_id)
+  list(expr=exp_mat[, keep, drop=FALSE], label=ifelse(is_tb[keep], 1, 0),
+       n_tb=sum(is_tb), n_hc=sum(is_control))
+}
 
-  exp_dat <- exp_dat[, keep, drop=FALSE]
-  label <- ifelse(is_tb[keep], 1, 0)
+# ---- Process validation datasets ----
+process_geo <- function(gse_id, platform_pkg, disease_genes) {
+  cat(sprintf("\n--- Processing %s ---\n", gse_id))
+  gzfile <- file.path(getwd(), paste0(gse_id, "_series_matrix.txt.gz"))
+  if (!file.exists(gzfile)) stop("File not found: ", gzfile)
 
-  return(list(expr=exp_dat, label=label, gse_id=gse_id, n_tb=sum(is_tb), n_hc=sum(is_control)))
+  res <- parse_series_matrix(gzfile, platform_pkg)
+  common_genes <- intersect(disease_genes, rownames(res$expr))
+  cat(sprintf("  Common disease genes: %d / %d\n", length(common_genes), length(disease_genes)))
+  res$expr <- res$expr[common_genes, , drop=FALSE]
+  res$gse_id <- gse_id
+  res
 }
 
 # ---- Download & Process Validation Datasets ----
