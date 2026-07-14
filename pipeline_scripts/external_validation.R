@@ -37,37 +37,43 @@ parse_series_matrix <- function(gzfile, platform_pkg) {
   cat(sprintf("  Reading %s...\n", basename(gzfile)))
   lines <- readLines(gzfile)
 
-  # Find sample IDs and group info from header
-  sample_lines <- lines[grep("^!Sample_title", lines)]
-  sample_ids <- gsub('^!Sample_title\\s+"(.*)"$', '\\1', sample_lines)
-  sample_ids_clean <- gsub('^"|"$', '', sample_ids)
+  # GSM IDs: one line with all IDs quoted
+  gsm_line <- lines[grep("^!Sample_geo_accession", lines)][1]
+  gsm_parts <- strsplit(gsm_line, '\t')[[1]]
+  gsm_ids <- gsub('"', '', gsm_parts[-1])
+  gsm_ids <- trimws(gsm_ids)
+  n_samples <- length(gsm_ids)
+  cat(sprintf("  Found %d samples\n", n_samples))
 
-  # Get GSM IDs from the attribute lines
-  gsm_lines <- lines[grep("^!Sample_geo_accession", lines)]
-  gsm_ids <- gsub('^!Sample_geo_accession\\s+"(.*)"$', '\\1', gsm_lines)
-  gsm_ids <- trimws(gsub('^"|"$', '', gsm_ids))
-
-  # Parse group from Sample_title
-  grp_lower <- tolower(gsm_ids)
-
-  # Try parsing from Sample_characteristics lines
+  # Parse disease group from characteristics (tab-separated on single line!)
   char_lines <- lines[grep("^!Sample_characteristics_ch1", lines)]
-  char_vals <- gsub('^!Sample_characteristics_ch1\\s+"(.*)"$', '\\1', char_lines)
+  all_char_vals <- c()
+  for (cl in char_lines) {
+    parts <- strsplit(cl, '\t')[[1]]
+    vals <- gsub('"', '', parts[-1])
+    vals <- trimws(vals)
+    all_char_vals <- rbind(all_char_vals, vals)
+  }
+  if (length(char_lines) == 1) all_char_vals <- matrix(all_char_vals, nrow=1)
 
-  cat(sprintf("  Found %d samples\n", length(gsm_ids)))
+  # Parse from Sample_title too (also tab-separated)
+  title_line <- lines[grep("^!Sample_title", lines)][1]
+  title_parts <- strsplit(title_line, '\t')[[1]]
+  titles <- trimws(gsub('"', '', title_parts[-1]))
 
-  # Classify: Active TB vs Healthy Control
-  is_tb <- grepl("active tb|active tuberculosis|pulmonary tb|pulmonary tuberculosis|tb patient|tb\\b|tuberculosis", grp_lower)
-  is_control <- grepl("healthy control|healthy|normal|control\\b", grp_lower) &
-    !grepl("latent|ltbi|sarcoidosis|pneumonia|lung cancer|cancer|other disease", grp_lower)
+  is_tb <- rep(FALSE, n_samples)
+  is_control <- rep(FALSE, n_samples)
 
-  # Try supplementary classification from characteristics
-  if (sum(is_tb) == 0) {
-    for (cv in char_vals) {
-      cv_l <- tolower(cv)
-      is_tb <- is_tb | grepl("active tb|tuberculosis|tb\\b", cv_l)
-      is_control <- is_control | (grepl("healthy|normal|control", cv_l) & !grepl("latent|ltbi|sarcoidosis|pneumonia|cancer", cv_l))
-    }
+  for (i in 1:n_samples) {
+    # Build full description from all available fields
+    fields <- tolower(c(titles[i], all_char_vals[, i]))
+    full <- paste(fields, collapse=" ")
+    cat(sprintf("  Sample %d: %s\n", i, substr(full, 1, 80)))
+
+    is_tb[i] <- grepl("active tb|active tuberculosis|pulmonary tuberculosis|tb patient|tuberculosis", full) &
+      !grepl("latent", full)
+    is_control[i] <- grepl("healthy|normal|control", full) &
+      !grepl("latent|ltbi|sarcoidosis|pneumonia|cancer|other disease", full)
   }
 
   # Parse matrix data
