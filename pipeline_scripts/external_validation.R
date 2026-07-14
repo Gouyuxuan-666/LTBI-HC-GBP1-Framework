@@ -160,13 +160,20 @@ for (val_name in c("val1", "val2")) {
   # Apply best model and calculate AUC
   for (method in names(model)) {
     fit <- model[[method]]
-    feat <- intersect(ExtractVar(fit), colnames(val_mat))
-    if (length(feat) < 2) { auc_matrix[method, val$gse_id] <- NA; next }
-    orig_sub <- fit$subFeature
-    fit$subFeature <- feat
+    feat <- ExtractVar(fit)
+    # Pad validation matrix with 0 for missing features
+    missing <- setdiff(feat, colnames(val_mat))
+    if (length(missing) > 0) {
+      pad <- matrix(0, nrow=nrow(val_mat), ncol=length(missing), dimnames=list(rownames(val_mat), missing))
+      val_full <- cbind(val_mat, pad)
+    } else {
+      val_full <- val_mat
+    }
+    feat_avail <- intersect(feat, colnames(val_full))
+    if (length(feat_avail) < 2) { auc_matrix[method, val$gse_id] <- NA; next }
 
     auc_val <- tryCatch({
-      rs <- CalPredictScore(fit, val_mat)
+      rs <- CalPredictScore(fit, val_full)
       as.numeric(auc(roc(val_lab$Type, rs[rownames(val_mat)])))
     }, error=function(e) NA)
     auc_matrix[method, val$gse_id] <- auc_val
@@ -185,8 +192,12 @@ for (val_name in c("val1", "val2")) {
 
   # ROC curve for best model
   fit <- model[[best_method]]
-  feat <- intersect(ExtractVar(fit), colnames(val_mat))
-  fit$subFeature <- feat
+  feat <- ExtractVar(fit)
+  missing <- setdiff(feat, colnames(val_mat))
+  if (length(missing) > 0) {
+    pad <- matrix(0, nrow=nrow(val_mat), ncol=length(missing), dimnames=list(rownames(val_mat), missing))
+    val_mat <- cbind(val_mat, pad)
+  }
   rs <- CalPredictScore(fit, val_mat)
 
   pdf(sprintf("extval/ROC_%s.pdf", val$gse_id), width=7, height=6)
