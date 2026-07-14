@@ -7,6 +7,8 @@
 
 **Author**: [Gou Yuxuan](https://orcid.org/0009-0000-4213-0274), Xinjiang Second Medical College
 
+**Supervisor**: Prof. Wu Jiang-dong (吴江东), M.D., Ph.D., Xinjiang Second Medical College / Shihezi University School of Medicine
+
 ## Key Findings
 
 | Evidence Layer | Module | Key Result |
@@ -102,6 +104,10 @@ python M10_visualize.py
 # 7. Census validation (M12)
 python M12_census.py
 ```
+
+## Funding
+
+Supported by **Xinjiang Second Medical College** grant **XGGK2025-01** (PI: Prof. Wu Jiang-dong, 2025.09–2028.09): *SP110-内质网应激-免疫类型转换对肺结核免疫微环境调控作用机制研究*.
 
 ## References
 
