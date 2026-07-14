@@ -50,12 +50,20 @@ tryCatch({
   bg_lines <- strsplit(bg_txt, "\n")[[1]]
   bg_lines <- bg_lines[!grepl("^#", bg_lines) & bg_lines != ""]
   if (length(bg_lines) > 0) {
-    bg_df <- read.table(text=bg_lines, sep="\t", quote="", header=FALSE, fill=TRUE)
-    colnames(bg_df) <- c("ID_A","ID_B","AltA","AltB","AliasA","AliasB","Method",
-      "Author","PubID","TaxA","TaxB","Type","Source","IntID","Confidence")
-    write.table(bg_df, "extval/db_BioGRID/GBP1_PSICQUIC.txt", sep="\t", quote=FALSE, row.names=FALSE)
-    cat(sprintf("PSICQUIC interactions: %d\n", nrow(bg_df)))
-    cat(sprintf("Unique interactors: %d\n", length(unique(c(bg_df$ID_A, bg_df$ID_B)))))
+    bg_df <- tryCatch(read.table(text=bg_lines, sep="\t", quote="", header=FALSE, fill=TRUE, comment.char=""),
+      error=function(e) NULL)
+    if (!is.null(bg_df) && ncol(bg_df) >= 2) {
+      colnames(bg_df)[1:2] <- c("InteractorA","InteractorB")
+      # Extract gene names
+      bg_genes <- unique(c(
+        gsub(".*:","", bg_df$InteractorA),
+        gsub(".*:","", bg_df$InteractorB)))
+      bg_genes <- bg_genes[!grepl("^$", bg_genes)]
+      write.table(data.frame(Gene=bg_genes), "extval/db_BioGRID/GBP1_interactors.txt",
+        sep="\t", quote=FALSE, row.names=FALSE)
+      cat(sprintf("PSICQUIC interactors: %d unique genes\n", length(bg_genes)))
+      cat(sprintf("Top: %s\n", paste(head(bg_genes, 10), collapse=", ")))
+    }
   }
 }, error=function(e) cat(sprintf("BioGRID failed: %s\n", e$message)))
 
@@ -101,6 +109,7 @@ cat("\n========== TRRUST: TF -> GBP1 ==========\n")
 
 tryCatch({
   if (!requireNamespace("OmnipathR", quietly=TRUE)) {
+    if (!requireNamespace("remotes", quietly=TRUE)) install.packages("remotes")
     remotes::install_github("saezlab/OmnipathR", upgrade="never")
   }
   library(OmnipathR)
@@ -160,10 +169,12 @@ tryCatch({
     }
   }'
 
-  resp <- POST("https://gnomad.broadinstitute.org/api",
-    body=list(query=gnomad_query), encode="json",
-    add_headers("Content-Type"="application/json"))
-  if (status_code(resp) == 200) {
+  resp <- tryCatch(
+    POST("https://gnomad.broadinstitute.org/api",
+      body=list(query=gnomad_query), encode="json",
+      add_headers("Content-Type"="application/json"), timeout(30)),
+    error=function(e) NULL)
+  if (!is.null(resp) && status_code(resp) == 200) {
     gn <- fromJSON(content(resp, "text", encoding="UTF-8"))
     g <- gn$data$gene
     if (!is.null(g)) {
