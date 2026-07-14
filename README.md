@@ -7,7 +7,7 @@
 
 **Author**: [Gou Yuxuan](https://orcid.org/0009-0000-4213-0274), Xinjiang Second Medical College
 
-**Supervisor**: Prof. Wu Jiang-dong (吴江东), M.D., Ph.D., Xinjiang Second Medical College / Shihezi University School of Medicine
+**Supervisor**: Prof. Wu Jiang-dong (吴江东), M.D., Ph.D., Xinjiang Second Medical College 
 
 ## Key Findings
 
