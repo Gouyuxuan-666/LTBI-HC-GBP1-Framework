@@ -59,10 +59,11 @@ parse_series_matrix <- function(gzfile, platform_pkg) {
 
   for (i in 1:n_samples) {
     full <- tolower(paste(titles[i], char_vals[i]))
-    is_tb[i] <- grepl("active tb|active tuberculosis|pulmonary tuberculosis|tb patient\\b|tuberculosis", full) &
-      !grepl("latent|ltbi", full)
-    is_control[i] <- grepl("healthy|control\\b|hc\\b|normal donor|normal tissue", full) &
-      !grepl("active tb|active tuberculosis|tb patient|tuberculosis|latent|ltbi|sarcoidosis|pneumonia|cancer|other disease", full)
+    # PTB/CON prefix (GSE19444) or disease status (GSE39940)
+    is_tb[i] <- grepl("^ptb|active tb|active tuberculosis|pulmonary tuberculosis|tb patient\\b", full) &
+      !grepl("latent|ltb_", full)
+    is_control[i] <- grepl("^con_|healthy|control\\b|hc\\b|normal donor|normal tissue|other disease", full) &
+      !grepl("active tb|active tuberculosis|tb patient|tuberculosis|latent|ltb_|sarcoidosis|pneumonia|cancer", full)
   }
 
   # Parse matrix data
