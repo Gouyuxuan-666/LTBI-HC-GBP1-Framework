@@ -18,7 +18,8 @@ for (d in c("extval/db_GTEx","extval/db_HPA","extval/db_GWAS")) dir.create(d, re
 cat("\n========== GTEx: GBP1 Tissue Expression ==========\n")
 tryCatch({
   resp <- GET("https://gtexportal.org/rest/v2/expression/medianTranscriptExpression",
-    query=list(gencodeId="ENSG00000166128.13", datasetId="gtex_v8", format="json"))
+    query=list(gencodeId="ENSG00000166128.13", datasetId="gtex_v8", format="json"),
+    config(ssl_verifypeer=FALSE), timeout(30))
   if (status_code(resp) == 200) {
     gtex <- fromJSON(content(resp, "text", encoding="UTF-8"))
     gtex_df <- gtex$medianTranscriptExpression
@@ -45,7 +46,7 @@ tryCatch({
 # ============================================================================
 cat("\n========== HPA: GBP1 Protein Expression ==========\n")
 tryCatch({
-  hpa_url <- "https://www.proteinatlas.org/download/normal_tissue.tsv.zip"
+  hpa_url <- "https://v23.proteinatlas.org/download/normal_tissue.tsv.zip"
   hpa_zip <- "extval/db_HPA/normal_tissue.tsv.zip"
   if (!file.exists(hpa_zip)) {
     cat("Downloading HPA normal_tissue.tsv.zip (~15 MB)...\n")
@@ -81,21 +82,18 @@ cat("\n========== GWAS Catalog: GBP1 Locus ==========\n")
 tryCatch({
   # Search associations by gene
   gw_url <- "https://www.ebi.ac.uk/gwas/rest/api/associations/search"
-  resp <- GET(gw_url, query=list(geneName="GBP1", pageSize=50))
+  resp <- GET(gw_url, query=list(geneName="GBP1", pageSize=50), timeout(30))
   if (status_code(resp) == 200) {
     gw <- fromJSON(content(resp, "text", encoding="UTF-8"))
     n_assoc <- gw$page$totalElements
     cat(sprintf("GWAS associations for GBP1: %d\n", n_assoc))
-
     if (n_assoc > 0) {
-      assoc_list <- gw$`_embedded`$associations
+      # GWAS API uses HAL `_embedded` — use list indexing for safety
+      embed <- gw[["_embedded"]]
+      assoc_list <- embed[["associations"]]
       gw_df <- data.frame(
-        pvalue=assoc_list$pvalue,
+        pvalue=as.numeric(assoc_list$pvalue),
         trait=sapply(assoc_list$trait, function(x) paste(unique(unlist(x)), collapse="; ")),
-        riskAllele=sapply(assoc_list$loci, function(x) {
-          alleles <- unlist(x$strongestRiskAlleles)
-          if (length(alleles) > 0) alleles[1] else ""
-        }),
         stringsAsFactors=FALSE)
       gw_df <- gw_df[order(gw_df$pvalue), ]
       write.table(gw_df, "extval/db_GWAS/GBP1_GWAS_associations.txt", sep="\t", quote=FALSE, row.names=FALSE)
