@@ -16,7 +16,7 @@ if (!requireNamespace("GEOquery", quietly=TRUE)) {
 }
 suppressMessages({
   library(GEOquery); library(limma); library(pROC)
-  library(illuminaHumanv4.db)  # GPL10558 probe mapping
+  library(illuminaHumanv4.db); library(gbm)  # GPL10558 probe mapping
 })
 
 # Load trained model from individual files (no dependency on pipeline_results.rds)
@@ -71,9 +71,9 @@ parse_series_matrix <- function(gzfile, platform_pkg) {
     cat(sprintf("  Sample %d: %s\n", i, substr(full, 1, 80)))
 
     is_tb[i] <- grepl("active tb|active tuberculosis|pulmonary tuberculosis|tb patient|tuberculosis", full) &
-      !grepl("latent", full)
-    is_control[i] <- grepl("healthy|normal|control", full) &
-      !grepl("latent|ltbi|sarcoidosis|pneumonia|cancer|other disease", full)
+      !grepl("latent|ltbi", full)
+    is_control[i] <- grepl("healthy|normal|control|hc\\b", full) &
+      !grepl("active tb|active tuberculosis|tb patient|tuberculosis|latent|ltbi|sarcoidosis|pneumonia|cancer|other disease", full)
   }
 
   # Parse matrix data
