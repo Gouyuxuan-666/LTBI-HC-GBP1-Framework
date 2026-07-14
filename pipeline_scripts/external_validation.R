@@ -16,7 +16,7 @@ if (!requireNamespace("GEOquery", quietly=TRUE)) {
 }
 suppressMessages({
   library(GEOquery); library(limma); library(pROC)
-  library(illuminaHumanv4.db); library(gbm)  # GPL10558 probe mapping
+  library(illuminaHumanv4.db); library(gbm); library(glmnet); library(mboost)
 })
 
 # Load trained model from individual files (no dependency on pipeline_results.rds)
@@ -45,34 +45,23 @@ parse_series_matrix <- function(gzfile, platform_pkg) {
   n_samples <- length(gsm_ids)
   cat(sprintf("  Found %d samples\n", n_samples))
 
-  # Parse disease group from characteristics (tab-separated on single line!)
-  char_lines <- lines[grep("^!Sample_characteristics_ch1", lines)]
-  all_char_vals <- c()
-  for (cl in char_lines) {
-    parts <- strsplit(cl, '\t')[[1]]
-    vals <- gsub('"', '', parts[-1])
-    vals <- trimws(vals)
-    all_char_vals <- rbind(all_char_vals, vals)
-  }
-  if (length(char_lines) == 1) all_char_vals <- matrix(all_char_vals, nrow=1)
+  # Parse disease group from first characteristics line (tab-separated, all on one line)
+  cl <- lines[grep("^!Sample_characteristics_ch1\\b", lines)][1]  # only ch1, not ch1.1
+  parts <- strsplit(cl, '\t')[[1]]
+  char_vals <- trimws(gsub('"', '', parts[-1]))
 
-  # Parse from Sample_title too (also tab-separated)
+  # Parse from Sample_title too
   title_line <- lines[grep("^!Sample_title", lines)][1]
   title_parts <- strsplit(title_line, '\t')[[1]]
   titles <- trimws(gsub('"', '', title_parts[-1]))
 
-  is_tb <- rep(FALSE, n_samples)
-  is_control <- rep(FALSE, n_samples)
+  is_tb <- rep(FALSE, n_samples); is_control <- rep(FALSE, n_samples)
 
   for (i in 1:n_samples) {
-    # Build full description from all available fields
-    fields <- tolower(c(titles[i], all_char_vals[, i]))
-    full <- paste(fields, collapse=" ")
-    cat(sprintf("  Sample %d: %s\n", i, substr(full, 1, 80)))
-
-    is_tb[i] <- grepl("active tb|active tuberculosis|pulmonary tuberculosis|tb patient|tuberculosis", full) &
+    full <- tolower(paste(titles[i], char_vals[i]))
+    is_tb[i] <- grepl("active tb|active tuberculosis|pulmonary tuberculosis|tb patient\\b|tuberculosis", full) &
       !grepl("latent|ltbi", full)
-    is_control[i] <- grepl("healthy|normal|control|hc\\b", full) &
+    is_control[i] <- grepl("healthy|control\\b|hc\\b|normal donor|normal tissue", full) &
       !grepl("active tb|active tuberculosis|tb patient|tuberculosis|latent|ltbi|sarcoidosis|pneumonia|cancer|other disease", full)
   }
 
