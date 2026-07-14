@@ -160,12 +160,13 @@ for (val_name in c("val1", "val2")) {
   # Apply best model and calculate AUC
   for (method in names(model)) {
     fit <- model[[method]]
-    feat <- ExtractVar(fit)
-    feat <- intersect(feat, colnames(val_mat))
+    feat <- intersect(ExtractVar(fit), colnames(val_mat))
     if (length(feat) < 2) { auc_matrix[method, val$gse_id] <- NA; next }
+    orig_sub <- fit$subFeature
+    fit$subFeature <- feat
 
     auc_val <- tryCatch({
-      rs <- CalPredictScore(fit, val_mat[, feat, drop=FALSE])
+      rs <- CalPredictScore(fit, val_mat)
       as.numeric(auc(roc(val_lab$Type, rs[rownames(val_mat)])))
     }, error=function(e) NA)
     auc_matrix[method, val$gse_id] <- auc_val
@@ -184,9 +185,9 @@ for (val_name in c("val1", "val2")) {
 
   # ROC curve for best model
   fit <- model[[best_method]]
-  feat <- ExtractVar(fit)
-  feat <- intersect(feat, colnames(val_mat))
-  rs <- CalPredictScore(fit, val_mat[, feat, drop=FALSE])
+  feat <- intersect(ExtractVar(fit), colnames(val_mat))
+  fit$subFeature <- feat
+  rs <- CalPredictScore(fit, val_mat)
 
   pdf(sprintf("extval/ROC_%s.pdf", val$gse_id), width=7, height=6)
   roc_obj <- roc(val_lab$Type, rs[rownames(val_mat)])
